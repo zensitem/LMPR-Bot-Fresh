@@ -1,4 +1,4 @@
-// === KEEP RENDER HAPPY WITH EXPRESS ===
+// === EXPRESS SERVER FOR RENDER & UPTIMEROBOT ===
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3000;
 app.get('/', (req, res) => res.send('LMPR-Bot is alive!'));
 app.listen(PORT, () => console.log(`Web server running on port ${PORT}`));
 
-// === DISCORD BOT ===
+// === DISCORD CLIENT SETUP ===
 const { 
     Client, 
     GatewayIntentBits, 
@@ -14,30 +14,14 @@ const {
     EmbedBuilder, 
     ActionRowBuilder, 
     ButtonBuilder, 
-    ButtonStyle,
-    SlashCommandBuilder,
-    Routes,
-    REST
+    ButtonStyle, 
+    TextInputBuilder, 
+    ModalBuilder, 
+    TextInputStyle,
+    InteractionType
 } = require('discord.js');
 const fetch = require('node-fetch');
 
-// === CONFIG ===
-const BOT_OWNER_ID = '1314289576503672933';
-const STAFF_ROLE_ID = '1375125674012053584';
-
-const COMMAND_LOG_CHANNEL = '1395398680953225370';
-const ERLC_API_KEY = process.env.ERLC_API_KEY || '';
-const ERLC_SERVER_API = 'https://api.policeroleplay.community/v1/server/command';
-
-let reminders = [
-    "Reminder: park properly.",
-    "Reminder: join our Discord server.",
-    "Reminder: strict roleplay mode may be active.",
-    "Reminder: no weapons in safezones."
-];
-let strictMode = false;
-
-// === CLIENT ===
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -48,15 +32,27 @@ const client = new Client({
     partials: [Partials.Channel]
 });
 
-// === HELPERS ===
+// === CONFIGURATION ===
+const BOT_OWNER_ID = '1314289576503672933';
+const STAFF_ROLE_ID = '1375125674012053584';
+const COMMAND_LOG_CHANNEL = '1395398680953225370';
+const ERLC_API_KEY = process.env.ERLC_API_KEY || '';
+const ERLC_SERVER_API = 'https://api.policeroleplay.community/v1/server/command';
+
+let strictMode = false;
+let reminders = [
+    "Reminder: park properly.",
+    "Reminder: join our Discord server.",
+    "Reminder: strict roleplay mode may be active.",
+    "Reminder: no weapons in safezones."
+];
+
+// === HELPER FUNCTIONS ===
 async function sendERLCCommand(command) {
     try {
         const res = await fetch(ERLC_SERVER_API, {
             method: 'POST',
-            headers: {
-                'Server-Key': ERLC_API_KEY,
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Server-Key': ERLC_API_KEY, 'Content-Type': 'application/json' },
             body: JSON.stringify({ command })
         });
         const json = await res.json().catch(() => ({}));
@@ -76,7 +72,7 @@ async function sendDM(userId, content) {
     }
 }
 
-// === REMINDERS ===
+// === REMINDERS INTERVAL ===
 setInterval(async () => {
     if (!strictMode) {
         const reminder = reminders[Math.floor(Math.random() * reminders.length)];
@@ -90,90 +86,97 @@ client.once('ready', async () => {
     await sendDM(BOT_OWNER_ID, 'LMPR Bot has started up!');
 });
 
-// === SLASH COMMAND REGISTRATION ===
-const commands = [
-    new SlashCommandBuilder()
-        .setName('staffpanel')
-        .setDescription('Open the staff control panel.')
-].map(cmd => cmd.toJSON());
-
-const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-(async () => {
-    try {
-        console.log('Registering slash commands...');
-        await rest.put(
-            Routes.applicationCommands(client.user?.id || BOT_OWNER_ID),
-            { body: commands }
-        );
-        console.log('Slash commands registered!');
-    } catch (err) {
-        console.error(err);
-    }
-})();
-
-// === INTERACTION HANDLER ===
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName === 'staffpanel') {
-        if (!interaction.member.roles.cache.has(STAFF_ROLE_ID) && interaction.user.id !== BOT_OWNER_ID) {
-            return interaction.reply({ content: 'You do not have permission.', ephemeral: true });
+// === MESSAGE HANDLER FOR !staffpanel ===
+client.on('messageCreate', async message => {
+    if (message.author.bot) return;
+    if (message.content.toLowerCase() === '!staffpanel') {
+        if (!message.member.roles.cache.has(STAFF_ROLE_ID) && message.author.id !== BOT_OWNER_ID) {
+            return message.reply('You do not have permission to open the staff panel.');
         }
 
+        // Staff Panel Embed
         const panelEmbed = new EmbedBuilder()
             .setTitle('LMPR Staff Panel')
-            .setDescription('Control ER:LC commands and reminders.')
+            .setDescription('Manage ER:LC commands and strict mode.')
             .setColor('#1a1a1a') // black
-            .setThumbnail('https://cdn.discordapp.com/attachments/1375128537425776792/1412521613613858846/Gemini_Generated_Image_7kdjzk7kdjzk7kdj-fotor-20250902201422.png');
+            .setFooter({ text: 'LMPR | Staff Panel' });
 
+        // Buttons
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('send_erlc')
-                    .setLabel('Send ER:LC Command')
-                    .setStyle(ButtonStyle.Danger),
-                new ButtonBuilder()
                     .setCustomId('strict_on')
                     .setLabel('Activate Strict Mode')
-                    .setStyle(ButtonStyle.Primary),
+                    .setStyle(ButtonStyle.Danger),
                 new ButtonBuilder()
                     .setCustomId('strict_off')
                     .setLabel('Deactivate Strict Mode')
-                    .setStyle(ButtonStyle.Secondary)
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId('erlc_modal')
+                    .setLabel('Send ER:LC Command')
+                    .setStyle(ButtonStyle.Primary)
             );
 
-        await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
+        await message.reply({ embeds: [panelEmbed], components: [row] });
     }
 });
 
-// === BUTTON HANDLER ===
+// === INTERACTION HANDLER ===
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
+    if (interaction.isButton()) {
+        if (interaction.customId === 'strict_on') {
+            strictMode = true;
+            await sendERLCCommand(':m Strict mode activated!');
+            await interaction.reply({ content: 'Strict Mode is now ON.', ephemeral: true });
+        }
+        if (interaction.customId === 'strict_off') {
+            strictMode = false;
+            await sendERLCCommand(':m Strict mode deactivated!');
+            await interaction.reply({ content: 'Strict Mode is now OFF.', ephemeral: true });
+        }
+        if (interaction.customId === 'erlc_modal') {
+            // Show a modal for ER:LC command input
+            const modal = new ModalBuilder()
+                .setCustomId('erlc_input_modal')
+                .setTitle('Send ER:LC Command');
 
-    if (interaction.customId === 'send_erlc') {
-        await interaction.reply({ content: 'Send an ER:LC command via DM to the bot owner.', ephemeral: true });
-        // you could extend to collect command input
+            const input = new TextInputBuilder()
+                .setCustomId('erlc_command')
+                .setLabel('Enter your ER:LC command')
+                .setStyle(TextInputStyle.Short)
+                .setPlaceholder('e.g., :m Hello World!')
+                .setRequired(true);
+
+            const row = new ActionRowBuilder().addComponents(input);
+            modal.addComponents(row);
+
+            await interaction.showModal(modal);
+        }
     }
-    if (interaction.customId === 'strict_on') {
-        strictMode = true;
-        await sendERLCCommand(':m Strict mode activated!');
-        await interaction.reply({ content: 'Strict mode is now ON.', ephemeral: true });
-    }
-    if (interaction.customId === 'strict_off') {
-        strictMode = false;
-        await sendERLCCommand(':m Strict mode deactivated!');
-        await interaction.reply({ content: 'Strict mode is now OFF.', ephemeral: true });
+
+    // Handle Modal Submission
+    if (interaction.type === InteractionType.ModalSubmit) {
+        if (interaction.customId === 'erlc_input_modal') {
+            const command = interaction.fields.getTextInputValue('erlc_command');
+            const res = await sendERLCCommand(command);
+            if (res.success) {
+                await interaction.reply({ content: `✅ Command sent: \`${command}\``, ephemeral: true });
+            } else {
+                await interaction.reply({ content: `❌ Failed: ${res.error || JSON.stringify(res.data)}`, ephemeral: true });
+            }
+        }
     }
 });
 
-// === ERROR HANDLER ===
+// === ERROR HANDLING ===
 process.on('unhandledRejection', async error => {
     console.error('Unhandled promise rejection:', error);
     await sendDM(BOT_OWNER_ID, `Unhandled error: ${error}`);
 });
 
 process.on('exit', async code => {
-    await sendDM(BOT_OWNER_ID, `Bot is shutting down. Exit code: ${code}`);
+    await sendDM(BOT_OWNER_ID, `Bot shutting down. Exit code: ${code}`);
 });
 
 // === LOGIN ===
